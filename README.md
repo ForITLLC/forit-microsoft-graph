@@ -1,6 +1,9 @@
+<p align="center">
+  <img src="logo.png" alt="ForIT Logo" width="350">
+</p>
+
 # ForIT Microsoft Graph
 
-[![npm version](https://img.shields.io/npm/v/@foritllc/microsoft-graph.svg)](https://www.npmjs.com/package/@foritllc/microsoft-graph)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A lean MCP (Model Context Protocol) server for raw Microsoft Graph API access with **multi-tenant account management**.
