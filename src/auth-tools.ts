@@ -197,49 +197,6 @@ export function registerAuthTools(server: McpServer, authManager: AuthManager, g
   });
 
   server.tool(
-    'select-account',
-    'Select a specific Microsoft account to use',
-    {
-      accountId: z.string().describe('The account ID to select'),
-    },
-    async ({ accountId }) => {
-      try {
-        const success = await authManager.selectAccount(accountId);
-        if (success) {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify({ message: `Selected account: ${accountId}` }),
-              },
-            ],
-          };
-        } else {
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify({ error: `Account not found: ${accountId}` }),
-              },
-            ],
-          };
-        }
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                error: `Failed to select account: ${(error as Error).message}`,
-              }),
-            },
-          ],
-        };
-      }
-    }
-  );
-
-  server.tool(
     'remove-account',
     'Remove a Microsoft account from the cache',
     {
@@ -286,7 +243,7 @@ export function registerAuthTools(server: McpServer, authManager: AuthManager, g
   if (graphClient) {
     server.tool(
       'graph-request',
-      `Execute a raw Microsoft Graph API request. Supports any Graph API endpoint. Can target specific account without switching.
+      `Execute a raw Microsoft Graph API request. Supports any Graph API endpoint. REQUIRES accountId when multiple accounts exist.
 
 Documentation:
 - Graph API Reference: https://learn.microsoft.com/en-us/graph/api/overview
@@ -300,7 +257,7 @@ Documentation:
         queryParams: z.record(z.string()).optional().describe('Query parameters (e.g., {"$select": "displayName", "$top": "10"})'),
         headers: z.record(z.string()).optional().describe('Additional headers to include'),
         apiVersion: z.enum(['v1.0', 'beta']).default('v1.0').describe('Graph API version'),
-        accountId: z.string().optional().describe('Target a specific account by ID without switching. Use list-accounts to see available IDs.'),
+        accountId: z.string().optional().describe('REQUIRED when multiple accounts exist. Use list-accounts to see available IDs.'),
       },
       async ({ endpoint, method, body, queryParams, headers, apiVersion, accountId }) => {
         try {

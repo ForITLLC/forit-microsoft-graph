@@ -43,25 +43,17 @@ async function main(): Promise<void> {
 
     if (args.listAccounts) {
       const accounts = await authManager.listAccounts();
-      const selectedAccountId = authManager.getSelectedAccountId();
-      const result = accounts.map((account) => ({
-        id: account.homeAccountId,
-        username: account.username,
-        name: account.name,
-        selected: account.homeAccountId === selectedAccountId,
-      }));
+      const result = accounts.map((account) => {
+        const metadata = authManager.getAccountMetadata(account.homeAccountId);
+        return {
+          id: account.homeAccountId,
+          username: account.username,
+          name: account.name,
+          appId: metadata?.appId || 'UNKNOWN',
+          tenantId: metadata?.tenantId || 'UNKNOWN',
+        };
+      });
       console.log(JSON.stringify({ accounts: result }));
-      process.exit(0);
-    }
-
-    if (args.selectAccount) {
-      const success = await authManager.selectAccount(args.selectAccount);
-      if (success) {
-        console.log(JSON.stringify({ message: `Selected account: ${args.selectAccount}` }));
-      } else {
-        console.log(JSON.stringify({ error: `Account not found: ${args.selectAccount}` }));
-        process.exit(1);
-      }
       process.exit(0);
     }
 

@@ -20,7 +20,6 @@ program
   .option('--logout', 'Log out and clear saved credentials')
   .option('--verify-login', 'Verify login without starting the server')
   .option('--list-accounts', 'List all cached accounts')
-  .option('--select-account <accountId>', 'Select a specific account by ID')
   .option('--remove-account <accountId>', 'Remove a specific account by ID')
   .option('--read-only', 'Start server in read-only mode, disabling write operations')
   .option(
@@ -63,7 +62,6 @@ export interface CommandOptions {
   logout?: boolean;
   verifyLogin?: boolean;
   listAccounts?: boolean;
-  selectAccount?: string;
   removeAccount?: string;
   readOnly?: boolean;
   http?: string | boolean;
