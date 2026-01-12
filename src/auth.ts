@@ -708,6 +708,116 @@ After login run the "verify login" command
   getAccountMetadata(accountId: string): AccountMetadata | undefined {
     return this.accountMetadata.get(accountId);
   }
+
+  /**
+   * Get all account metadata
+   */
+  getAllAccountMetadata(): Map<string, AccountMetadata> {
+    return this.accountMetadata;
+  }
+
+  /**
+   * Check for appId conflicts - returns conflicts if attempting to use different appId for same tenant
+   */
+  async checkAppIdConflicts(tenantId: string, appId: string): Promise<{
+    hasConflict: boolean;
+    existingAccounts?: Array<{
+      username: string;
+      accountId: string;
+      existingAppId: string;
+      existingTenant: string;
+    }>;
+  }> {
+    const accounts = await this.listAccounts();
+    const conflicts: Array<{
+      username: string;
+      accountId: string;
+      existingAppId: string;
+      existingTenant: string;
+    }> = [];
+
+    // Normalize tenant for comparison (handle both domain and GUID)
+    const normalizedTenant = tenantId.toLowerCase();
+
+    for (const account of accounts) {
+      const metadata = this.accountMetadata.get(account.homeAccountId);
+      if (!metadata) continue;
+
+      const existingTenant = metadata.tenantId.toLowerCase();
+
+      // Check if same tenant but different appId
+      if (
+        (existingTenant === normalizedTenant ||
+         account.tenantId?.toLowerCase() === normalizedTenant ||
+         account.username?.toLowerCase().endsWith(`@${normalizedTenant}`))
+        && metadata.appId !== appId
+      ) {
+        conflicts.push({
+          username: account.username || 'unknown',
+          accountId: account.homeAccountId,
+          existingAppId: metadata.appId,
+          existingTenant: metadata.tenantId,
+        });
+      }
+    }
+
+    return {
+      hasConflict: conflicts.length > 0,
+      existingAccounts: conflicts.length > 0 ? conflicts : undefined,
+    };
+  }
+
+  /**
+   * Validate all accounts have metadata - returns accounts missing metadata
+   */
+  async validateAccountMetadata(): Promise<{
+    valid: boolean;
+    accountsWithMetadata: Array<{
+      username: string;
+      accountId: string;
+      appId: string;
+      tenantId: string;
+    }>;
+    accountsMissingMetadata: Array<{
+      username: string;
+      accountId: string;
+    }>;
+  }> {
+    const accounts = await this.listAccounts();
+    const withMetadata: Array<{
+      username: string;
+      accountId: string;
+      appId: string;
+      tenantId: string;
+    }> = [];
+    const missingMetadata: Array<{
+      username: string;
+      accountId: string;
+    }> = [];
+
+    for (const account of accounts) {
+      const metadata = this.accountMetadata.get(account.homeAccountId);
+      if (metadata) {
+        withMetadata.push({
+          username: account.username || 'unknown',
+          accountId: account.homeAccountId,
+          appId: metadata.appId,
+          tenantId: metadata.tenantId,
+        });
+      } else {
+        missingMetadata.push({
+          username: account.username || 'unknown',
+          accountId: account.homeAccountId,
+        });
+      }
+    }
+
+    return {
+      valid: missingMetadata.length === 0,
+      accountsWithMetadata: withMetadata,
+      accountsMissingMetadata: missingMetadata,
+    };
+  }
 }
 
 export default AuthManager;

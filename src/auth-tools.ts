@@ -31,6 +31,27 @@ export function registerAuthTools(server: McpServer, authManager: AuthManager, g
           }
         }
 
+        // Check for appId conflicts before login
+        if (tenantId && appId) {
+          const conflictCheck = await authManager.checkAppIdConflicts(tenantId, appId);
+          if (conflictCheck.hasConflict) {
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    error: 'APP_ID_CONFLICT',
+                    message: `Cannot login with appId ${appId} for tenant ${tenantId} - existing account(s) use different appId`,
+                    conflicts: conflictCheck.existingAccounts,
+                    hint: 'Use force=true to override, or remove the conflicting account first with remove-account',
+                  }),
+                },
+              ],
+              isError: true,
+            };
+          }
+        }
+
         const text = await new Promise<string>((resolve, reject) => {
           authManager.acquireTokenByDeviceCode(resolve, { appId, tenantId }).catch(reject);
         });
@@ -94,15 +115,20 @@ export function registerAuthTools(server: McpServer, authManager: AuthManager, g
     };
   });
 
-  server.tool('list-accounts', 'List all available Microsoft accounts', {}, async () => {
+  server.tool('list-accounts', 'List all available Microsoft accounts with their appId/tenant metadata', {}, async () => {
     try {
       const accounts = await authManager.listAccounts();
-      // No 'selected' field - accountId is always required when multiple accounts exist
-      const result = accounts.map((account) => ({
-        id: account.homeAccountId,
-        username: account.username,
-        name: account.name,
-      }));
+      // Include appId/tenantId metadata for transparency
+      const result = accounts.map((account) => {
+        const metadata = authManager.getAccountMetadata(account.homeAccountId);
+        return {
+          id: account.homeAccountId,
+          username: account.username,
+          name: account.name,
+          appId: metadata?.appId || 'UNKNOWN - legacy account, re-authenticate',
+          tenantId: metadata?.tenantId || 'UNKNOWN',
+        };
+      });
 
       return {
         content: [
@@ -118,6 +144,52 @@ export function registerAuthTools(server: McpServer, authManager: AuthManager, g
           {
             type: 'text',
             text: JSON.stringify({ error: `Failed to list accounts: ${(error as Error).message}` }),
+          },
+        ],
+      };
+    }
+  });
+
+  server.tool('validate-accounts', 'Validate all accounts have proper appId/tenant metadata - identifies accounts that need re-authentication', {}, async () => {
+    try {
+      const validation = await authManager.validateAccountMetadata();
+
+      if (validation.valid) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                status: 'OK',
+                message: 'All accounts have proper metadata',
+                accounts: validation.accountsWithMetadata,
+              }),
+            },
+          ],
+        };
+      } else {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                status: 'WARNING',
+                message: 'Some accounts are missing metadata - they may fail to refresh tokens',
+                accountsOK: validation.accountsWithMetadata,
+                accountsNeedReauth: validation.accountsMissingMetadata,
+                hint: 'Remove accounts with missing metadata using remove-account, then re-authenticate with login',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify({ error: `Validation failed: ${(error as Error).message}` }),
           },
         ],
       };
