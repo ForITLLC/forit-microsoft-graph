@@ -333,7 +333,29 @@ class AuthManager {
     return accounts[0];
   }
 
-  async acquireTokenByDeviceCode(hack?: (message: string) => void): Promise<string | null> {
+  async acquireTokenByDeviceCode(
+    hack?: (message: string) => void,
+    options?: { appId?: string; tenantId?: string }
+  ): Promise<string | null> {
+    // Use custom app/tenant if provided, otherwise use defaults
+    let msalApp = this.msalApp;
+    if (options?.appId || options?.tenantId) {
+      const customConfig: Configuration = {
+        auth: {
+          clientId: options.appId || this.config.auth.clientId,
+          authority: `https://login.microsoftonline.com/${options.tenantId || 'common'}`,
+        },
+      };
+      msalApp = new PublicClientApplication(customConfig);
+      // Load existing token cache into custom app
+      try {
+        const cacheData = this.msalApp.getTokenCache().serialize();
+        msalApp.getTokenCache().deserialize(cacheData);
+      } catch {
+        // Ignore cache load errors for custom app
+      }
+    }
+
     const deviceCodeRequest = {
       scopes: this.scopes,
       deviceCodeCallback: (response: { message: string }) => {
@@ -366,11 +388,18 @@ After login run the "verify login" command
     try {
       logger.info('Requesting device code...');
       logger.info(`Requesting scopes: ${this.scopes.join(', ')}`);
-      const response = await this.msalApp.acquireTokenByDeviceCode(deviceCodeRequest);
+      logger.info(`Using app: ${options?.appId || this.config.auth.clientId}, tenant: ${options?.tenantId || 'default'}`);
+      const response = await msalApp.acquireTokenByDeviceCode(deviceCodeRequest);
       logger.info(`Granted scopes: ${response?.scopes?.join(', ') || 'none'}`);
       logger.info('Device code login successful');
       this.accessToken = response?.accessToken || null;
       this.tokenExpiry = response?.expiresOn ? new Date(response.expiresOn).getTime() : null;
+
+      // If using custom app, copy tokens back to main cache
+      if (options?.appId || options?.tenantId) {
+        const newCacheData = msalApp.getTokenCache().serialize();
+        this.msalApp.getTokenCache().deserialize(newCacheData);
+      }
 
       // Set the newly authenticated account as selected if no account is currently selected
       if (!this.selectedAccountId && response?.account) {

@@ -9,8 +9,10 @@ export function registerAuthTools(server: McpServer, authManager: AuthManager, g
     'Authenticate with Microsoft using device code flow',
     {
       force: z.boolean().default(false).describe('Force a new login even if already logged in'),
+      appId: z.string().optional().describe('Azure AD app registration client ID (defaults to env MS365_MCP_CLIENT_ID)'),
+      tenantId: z.string().optional().describe('Azure AD tenant ID or domain (defaults to env MS365_MCP_TENANT_ID or "common")'),
     },
-    async ({ force }) => {
+    async ({ force, appId, tenantId }) => {
       try {
         if (!force) {
           const loginStatus = await authManager.testLogin();
@@ -30,7 +32,7 @@ export function registerAuthTools(server: McpServer, authManager: AuthManager, g
         }
 
         const text = await new Promise<string>((resolve, reject) => {
-          authManager.acquireTokenByDeviceCode(resolve).catch(reject);
+          authManager.acquireTokenByDeviceCode(resolve, { appId, tenantId }).catch(reject);
         });
         return {
           content: [
