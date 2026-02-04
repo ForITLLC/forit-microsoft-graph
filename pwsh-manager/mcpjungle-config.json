@@ -1,0 +1,10 @@
+{
+  "name": "pwsh-manager",
+  "description": "Persistent PowerShell sessions for M365/Azure. Supports EXO, PnP, Azure, Power Platform with automatic session management.",
+  "transport": "stdio",
+  "command": "python3",
+  "args": ["/Users/benjaminwesleythomas/GitProjects/personal-MacMini/mcp-servers/pwsh-manager/mcp_server.py"],
+  "env": {
+    "PWSH_MANAGER_URL": "http://localhost:5100"
+  }
+}

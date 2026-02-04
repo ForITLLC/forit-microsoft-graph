@@ -1,0 +1,47 @@
+version: "3.8"
+
+services:
+  pwsh-manager:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pwsh-manager
+    restart: unless-stopped
+    ports:
+      - "${PWSH_MANAGER_PORT:-5100}:5100"
+    environment:
+      - PWSH_MANAGER_HOST=0.0.0.0
+      - PWSH_MANAGER_PORT=5100
+      - PWSH_MANAGER_LOG_LEVEL=${PWSH_MANAGER_LOG_LEVEL:-INFO}
+      - PWSH_MANAGER_TOKEN_DIR=/data/tokens
+      # 24 hours idle timeout (sessions survive overnight)
+      - PWSH_IDLE_TIMEOUT=86400
+    volumes:
+      # Persist token caches across restarts
+      - pwsh-tokens:/data/tokens
+      # Azure PowerShell token cache
+      - pwsh-azure:/root/.Azure
+      # EXO/Teams/PnP token caches
+      - pwsh-config:/root/.config
+      - pwsh-local:/root/.local
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5100/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pwsh-tokens:
+    driver: local
+  pwsh-azure:
+    driver: local
+  pwsh-config:
+    driver: local
+  pwsh-local:
+    driver: local

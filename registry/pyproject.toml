@@ -1,0 +1,12 @@
+[project]
+name = "m365-registry"
+version = "0.1.0"
+description = "Central registry MCP for M365 connections"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp[cli]>=1.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
