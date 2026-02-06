@@ -15,6 +15,9 @@ const CLI_CONNECTIONS_FILE = path.join(os.homedir(), '.cli-m365-all-connections.
 
 const MCP_NAME = 'pnp-m365';
 
+// Track active login processes to prevent zombies
+const activeLoginProcesses = new Map<string, ReturnType<typeof spawn>>();
+
 // Registry connection entry
 interface ConnectionEntry {
     appId: string | null;
@@ -22,6 +25,7 @@ interface ConnectionEntry {
     description: string;
     mcps: string[];
     cliConnectionName: string | null;
+    expectedEmail: string | null;
 }
 
 interface ConnectionsRegistry {
@@ -109,13 +113,18 @@ export async function listConnections(): Promise<string> {
 
     const results = entries.map(([name, entry]) => {
         const cliConn = findCliConnection(entry, cliConnections);
+        const connectedAs = cliConn?.identityName || null;
+        const emailMismatch = entry.expectedEmail && connectedAs &&
+            connectedAs.toLowerCase() !== entry.expectedEmail.toLowerCase();
         return {
             name,
             tenant: entry.tenant,
             appId: entry.appId,
             description: entry.description,
             loggedIn: !!cliConn,
-            connectedAs: cliConn?.identityName || null,
+            connectedAs,
+            expectedEmail: entry.expectedEmail || null,
+            warning: emailMismatch ? `WRONG ACCOUNT: expected ${entry.expectedEmail}, got ${connectedAs}` : null,
             cliConnectionName: cliConn?.name || null,
             needsSetup: !entry.appId ? 'Missing appId - needs app consent in tenant' : null
         };
@@ -203,6 +212,13 @@ export async function loginWithDeviceCode(connectionName: string): Promise<strin
         }, null, 2);
     }
 
+    // Kill any existing login process for this connection
+    const existing = activeLoginProcesses.get(connectionName);
+    if (existing && !existing.killed) {
+        existing.kill();
+        activeLoginProcesses.delete(connectionName);
+    }
+
     // Build login command - NO M365_CLI_CONFIG_HOME, use native storage
     const loginCmd = `m365 login --authType deviceCode --appId ${entry.appId} --tenant ${entry.tenant}`;
 
@@ -211,6 +227,23 @@ export async function loginWithDeviceCode(connectionName: string): Promise<strin
             shell: true,
             stdio: ['pipe', 'pipe', 'pipe']
         });
+
+        activeLoginProcesses.set(connectionName, subprocess);
+
+        // Clean up on exit (success or failure)
+        subprocess.on('exit', () => {
+            activeLoginProcesses.delete(connectionName);
+            clearTimeout(killTimer);
+        });
+
+        // Kill after 15 minutes (device codes expire in 15 min)
+        const killTimer = setTimeout(() => {
+            if (!subprocess.killed) {
+                subprocess.kill();
+                activeLoginProcesses.delete(connectionName);
+            }
+        }, 15 * 60 * 1000);
+        killTimer.unref();
 
         let output = '';
         let deviceCode = '';
@@ -231,9 +264,18 @@ export async function loginWithDeviceCode(connectionName: string): Promise<strin
             }
         });
 
-        // After 3 seconds, return the device code if we have it
-        setTimeout(async () => {
+        // Build sign-in hint
+        const signInAs = entry.expectedEmail
+            ? `SIGN IN AS: ${entry.expectedEmail}`
+            : `Sign in with your @${entry.tenant} account`;
+
+        // Poll for device code every 500ms, up to 15 seconds
+        let attempts = 0;
+        const maxAttempts = 30;
+        const pollInterval = setInterval(() => {
+            attempts++;
             if (deviceCode) {
+                clearInterval(pollInterval);
                 resolve(`
 ████████████████████████████████████████████████████████████
 ██                                                        ██
@@ -243,6 +285,8 @@ export async function loginWithDeviceCode(connectionName: string): Promise<strin
 ██                                                        ██
 ████████████████████████████████████████████████████████████
 
+>>> ${signInAs} <<<
+
 Connection: ${connectionName}
 Tenant: ${entry.tenant}
 App ID: ${entry.appId}
@@ -251,13 +295,14 @@ Description: ${entry.description}
 Complete auth in browser. The CLI will store the token automatically.
 Run m365_list_connections to verify after authenticating.
 `);
-            } else {
+            } else if (attempts >= maxAttempts) {
+                clearInterval(pollInterval);
                 resolve(JSON.stringify({
-                    error: 'Failed to get device code',
+                    error: 'Failed to get device code within 15 seconds',
                     output: output.substring(0, 500)
                 }, null, 2));
             }
-        }, 3000);
+        }, 500);
     });
 }
 
@@ -313,6 +358,17 @@ export async function runCliCommand(command: string, connectionName: string): Pr
         return JSON.stringify({
             error: `Connection "${connectionName}" not logged in`,
             hint: `Run m365_login with connectionName="${connectionName}"`
+        }, null, 2);
+    }
+
+    // Verify correct account is logged in
+    if (entry.expectedEmail && cliConn.identityName &&
+        cliConn.identityName.toLowerCase() !== entry.expectedEmail.toLowerCase()) {
+        return JSON.stringify({
+            error: `Wrong account logged in for "${connectionName}"`,
+            expected: entry.expectedEmail,
+            actual: cliConn.identityName,
+            hint: `Logout and re-login with the correct account. Run m365_login with connectionName="${connectionName}"`
         }, null, 2);
     }
 
