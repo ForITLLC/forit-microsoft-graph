@@ -447,72 +447,18 @@ def _strip_email_signature(body, endpoint, conn_config=None):
     return body
 
 
-def _intercept_sendmail(access_token, endpoint, method, body, base_url):
-    """Convert sendMail into a draft for user confirmation.
+def _intercept_sendmail(endpoint, method):
+    """Return a reminder note for sendMail requests.
 
-    Instead of sending immediately, creates a draft and returns it with
-    any existing thread info. The AI should show the draft to the user
-    and only send (POST /me/messages/{draftId}/send) after approval.
+    Doesn't modify the request — just appends a note so the AI confirms
+    with the user before sending, and considers whether this should be a reply.
     """
     if method.upper() != "POST" or "sendMail" not in endpoint:
-        return endpoint, method, body, None
-
-    if not body or not isinstance(body, dict):
-        return endpoint, method, body, None
-
-    msg = body.get("message", {})
-    recipients = msg.get("toRecipients", [])
-    if not recipients:
-        return endpoint, method, body, None
-
-    # Create draft instead of sending — POST /me/messages (without /send)
-    draft_result = _make_graph_request(
-        access_token, "/me/messages", "POST", msg, base_url=base_url,
+        return None
+    return (
+        "Have you confirmed this email with the user? "
+        "Are you sure this is not meant to be a reply to an existing thread?"
     )
-
-    if draft_result["status"] != "success":
-        return endpoint, method, body, None  # draft failed, fall through to original
-
-    draft = draft_result["data"]
-    draft_id = draft.get("id", "")
-    to_email = recipients[0].get("emailAddress", {}).get("address", "")
-    subject = msg.get("subject", "(no subject)")
-
-    # Search for existing threads with this recipient
-    thread_info = ""
-    if to_email:
-        search_endpoint = (
-            f'/me/messages?$search="to:{to_email} OR from:{to_email}"'
-            f'&$top=5&$orderby=receivedDateTime desc'
-            f'&$select=id,subject,receivedDateTime'
-        )
-        search = _make_graph_request(access_token, search_endpoint, base_url=base_url)
-        if search["status"] == "success" and search["data"].get("value"):
-            threads = search["data"]["value"]
-            thread_list = "\n".join(
-                f'  - "{t.get("subject", "(no subject)")}" ({t.get("receivedDateTime", "")[:10]}) [id: {t.get("id", "")[:20]}...]'
-                for t in threads
-            )
-            thread_info = (
-                f"\n\nExisting threads with {to_email}:\n{thread_list}\n"
-                f"If this should be a REPLY to one of these, delete this draft "
-                f"(DELETE /me/messages/{draft_id}) and use "
-                f"POST /me/messages/{{messageId}}/reply instead."
-            )
-
-    note = (
-        f"DRAFT CREATED — not sent yet.\n"
-        f"To: {to_email}\n"
-        f"Subject: {subject}\n"
-        f"Draft ID: {draft_id}\n"
-        f"\nTo send: POST /me/messages/{draft_id}/send"
-        f"\nTo discard: DELETE /me/messages/{draft_id}"
-        f"{thread_info}\n"
-        f"\nConfirm with user before sending."
-    )
-
-    # Return a no-op — the draft is already created, just return the note
-    return None, None, None, note
 
 
 # === Session Pool (PowerShell) ===
@@ -795,15 +741,8 @@ def _handle_graph_request(arguments: dict) -> list:
     body = arguments.get("body")
     base_url = res_config["base_url"]
 
-    # Email interceptors: draft creation + signature stripping
-    note = None
-    endpoint, method, body, note = _intercept_sendmail(
-        access_token, endpoint, method, body, base_url,
-    )
-
-    # If interceptor created a draft, return the note (no further API call needed)
-    if endpoint is None:
-        return [TextContent(type="text", text=note)]
+    # Email interceptors: reminder note + signature stripping
+    note = _intercept_sendmail(endpoint, method)
 
     if body:
         body = _strip_email_signature(body, endpoint, conn_config)
