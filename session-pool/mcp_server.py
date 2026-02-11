@@ -164,7 +164,7 @@ def handle_list_tools() -> dict:
                     "properties": {
                         "connection": {
                             "type": "string",
-                            "description": "Connection name (e.g., 'ForIT-GA')",
+                            "description": "Connection name from ~/.m365-connections.json",
                         },
                         "module": {
                             "type": "string",

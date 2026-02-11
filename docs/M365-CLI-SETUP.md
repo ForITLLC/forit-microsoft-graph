@@ -82,20 +82,11 @@ After creating an app, add it to `~/.m365-connections.json`:
       "appId": "your-app-id-here",
       "tenant": "yourtenant.onmicrosoft.com",
       "description": "What this connection is used for - REQUIRED",
-      "mcps": ["pnp-m365", "exo", "pwsh-manager"]
+      "mcps": ["mm"]
     }
   }
 }
 ```
-
-## Known App IDs
-
-| Connection | App ID | Tenant | Purpose |
-|------------|--------|--------|---------|
-| ForIT | `9bc3ab49-b65d-410a-85ad-de819febfddc` | forit.io | M365 admin |
-| Personal | `f8031f56-8e99-4ba2-afff-4ff858c7a6c8` | bthomas.io | Personal account |
-| Pivot | `255ef919-f1c8-4f43-bd4f-cfced065f41e` | airgeorgian.onmicrosoft.com | SharePoint/Power Automate |
-| ForIT PnP CLI | `068893e1-8223-4281-ad8b-8a370eec3086` | forit.io | Created by m365 setup |
 
 ## Troubleshooting
 

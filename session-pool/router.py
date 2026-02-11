@@ -49,7 +49,7 @@ def get_container_url(connection: str) -> str:
     if connection not in _port_map:
         return None
     # Use container name for Docker network resolution
-    # ForIT-GA -> m365-forit-ga:5200
+    # Contoso-GA -> m365-contoso-ga:5200
     container_name = f"m365-{connection.lower()}"
     return f"http://{container_name}:5200"
 

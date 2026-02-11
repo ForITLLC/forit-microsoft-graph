@@ -121,6 +121,7 @@ MODULES = {
         "health_cmd": "Get-CsTenant | Select-Object TenantId, DisplayName | ConvertTo-Json",
         "health_pattern": r"(TenantId|DisplayName)",
         "device_code_pattern": r"code\s+([A-Z0-9]{8,})",
+        "no_cached_auth": True,  # Teams doesn't persist tokens — skip health check on startup
     },
     "pnp": {
         "name": "PnP PowerShell",
@@ -295,12 +296,16 @@ class Session:
             # Docker volume tokens (e.g. ~/.Azure) survive container restarts,
             # so sessions can restore without a device code even when not in
             # the state file (e.g. container restarted during auth_pending).
+            # Skip for modules that never cache tokens (e.g. Teams) — the health
+            # check hangs and corrupts the process's stdout, causing broken pipes
+            # on the subsequent Connect-* command.
             module_config = MODULES.get(self.module)
-            if module_config and not module_config.get("use_pac"):
+            if module_config and not module_config.get("use_pac") and not module_config.get("no_cached_auth"):
                 try:
                     health_output = self._send_raw(module_config["health_cmd"], timeout=15)
                     if re.search(module_config["health_pattern"], health_output):
                         self.state = "authenticated"
+
                         self.authenticated_as = self._extract_identity(health_output)
                         logger.info(f"[{self.session_id}] Cached auth valid! Identity: {self.authenticated_as}")
                         logger.info(f"[{self.session_id}] PowerShell started (PID: {self.process.pid})")
@@ -445,6 +450,7 @@ class Session:
 
                         if re.search(module_config["health_pattern"], health_output):
                             self.state = "authenticated"
+    
                             self.device_code = None
                             self.auth_initiated_by = None
                             self.authenticated_as = self._extract_identity(health_output)
@@ -572,6 +578,7 @@ class Session:
             result = subprocess.run("pac auth list", shell=True, capture_output=True, text=True, timeout=10)
             if "Active" in result.stdout or "UNIVERSAL" in result.stdout:
                 self.state = "authenticated"
+                self.authenticated_at = time.time()
                 self.device_code = None
                 logger.info(f"[{self.session_id}] PAC auth completed")
                 return True
@@ -787,6 +794,7 @@ class SessionPool:
                     health_output = session._send_raw(module_config["health_cmd"], timeout=30)
                     if re.search(module_config["health_pattern"], health_output):
                         session.state = "authenticated"
+                        session.authenticated_at = time.time()
                         session.authenticated_as = session._extract_identity(health_output) or entry.get("authenticated_as")
                         session.on_auth_complete = self.save_state
                         self.sessions[session_id] = session

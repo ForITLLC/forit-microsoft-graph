@@ -53,7 +53,39 @@ The old servers are preserved in `_archived/` for reference.
 
 ## Quick Start
 
-### 1. Start the session pool
+### 1. Configure connections
+
+Create `~/.m365-connections.json` with your tenant connections:
+
+```json
+{
+  "connections": {
+    "Contoso-GA": {
+      "appId": "your-azure-ad-app-id",
+      "tenant": "contoso.com",
+      "tenantId": "your-tenant-guid",
+      "expectedEmail": "admin@contoso.com",
+      "description": "Contoso Global Admin",
+      "mcps": ["mm"]
+    }
+  }
+}
+```
+
+Manage connections with the `mm-connections` CLI:
+```bash
+./mm-connections list                          # List all connections
+./mm-connections add Contoso-GA                # Add interactively
+./mm-connections edit Contoso-GA appId abc-123  # Set a field
+./mm-connections duplicate Contoso-GA Contoso-Individual  # Copy
+```
+
+Connection naming convention:
+- **GA** — Global Admin (tenant admin operations)
+- **Individual** — Your user account on a work tenant
+- **Personal** — Your own personal tenant
+
+### 2. Start the session pool
 
 ```bash
 # Unified mode — single container, all connections (recommended for dev/small servers)
@@ -64,49 +96,31 @@ docker compose -p m365-session-pool -f docker-compose.unified.yml up -d
 docker compose -p m365-session-pool -f docker-compose.isolated.yml up -d
 ```
 
-### 2. Register with MCPJungle
+### 3. Register with your MCP host
+
+Copy `mm/mcpjungle-config.example.json` to `mm/mcpjungle-config.json`, update the paths for your system, then register:
 
 ```bash
 mcpjungle register --conf mm/mcpjungle-config.json
 ```
 
-### 3. Use it
+### 4. Use it
 
 ```bash
 # List connections
 mcpjungle invoke mm run '{}'
 
 # PowerShell (Exchange)
-mcpjungle invoke mm run '{"connection":"ForIT-GA","module":"exo","command":"Get-Mailbox -ResultSize 1"}'
+mcpjungle invoke mm run '{"connection":"<YOUR_CONNECTION>","module":"exo","command":"Get-Mailbox -ResultSize 1"}'
 
 # Graph API
-mcpjungle invoke mm graph_request '{"connection":"ForIT-GA","endpoint":"/me"}'
+mcpjungle invoke mm graph_request '{"connection":"<YOUR_CONNECTION>","endpoint":"/me"}'
 
 # Power Automate (Flow API)
-mcpjungle invoke mm graph_request '{"connection":"ForIT-GA","endpoint":"/providers/Microsoft.ProcessSimple/environments","resource":"flow"}'
+mcpjungle invoke mm graph_request '{"connection":"<YOUR_CONNECTION>","endpoint":"/providers/Microsoft.ProcessSimple/environments","resource":"flow"}'
 ```
 
 Auth is automatic — if a connection isn't authenticated, the tool returns a device code. No pre-auth step needed.
-
-## Connection Registry
-
-All connections live in `~/.m365-connections.json` (read-only to MCPs):
-
-```json
-{
-  "connections": {
-    "ForIT-GA": {
-      "appId": "your-app-id",
-      "tenant": "forit.io",
-      "tenantId": "guid-here",
-      "expectedEmail": "user@domain.com",
-      "description": "ForIT Global Admin"
-    }
-  }
-}
-```
-
-Every command requires a `connection` parameter. There are no defaults.
 
 ## Tools
 
@@ -116,7 +130,7 @@ Execute PowerShell commands through persistent Docker-hosted sessions.
 
 | Parameter | Description |
 |-----------|-------------|
-| `connection` | Connection name (e.g., `ForIT-GA`) |
+| `connection` | Connection name from registry |
 | `module` | `exo` (Exchange), `pnp` (SharePoint), `azure`, `teams` |
 | `command` | PowerShell command to execute |
 
@@ -142,7 +156,7 @@ The session pool manages PowerShell processes with native device code authentica
 
 | Mode | File | Use Case | RAM |
 |------|------|----------|-----|
-| **Unified** | `docker-compose.unified.yml` | Dev, small servers | ~1-2GB total |
+| **Unified** | `docker-compose.unified.yml` | Dev, small servers | ~2-4GB total |
 | **Isolated** | `docker-compose.isolated.yml` | Production, multi-user | ~512MB per connection |
 
 ### Features
@@ -195,7 +209,7 @@ curl http://localhost:5200/metrics | jq
 
 ## App Registration
 
-The PnP multi-tenant app was retired September 9, 2024. You must create your own Azure AD app registration. See [docs/M365-CLI-SETUP.md](docs/M365-CLI-SETUP.md) for instructions.
+Each tenant needs an Azure AD app registration with the appropriate API permissions. See [docs/M365-CLI-SETUP.md](docs/M365-CLI-SETUP.md) for instructions.
 
 ## License
 

@@ -1,0 +1,181 @@
+#!/usr/bin/env python3
+"""Manage the M365 connection registry (~/.m365-connections.json).
+
+Usage:
+    mm-connections list                         # List all connections
+    mm-connections show <name>                  # Show connection details
+    mm-connections add <name>                   # Add a new connection (interactive)
+    mm-connections edit <name> <key> <value>    # Set a field on a connection
+    mm-connections rename <old> <new>           # Rename a connection
+    mm-connections remove <name>                # Remove a connection
+    mm-connections duplicate <source> <new>     # Copy a connection under a new name
+"""
+
+import json
+import os
+import sys
+
+REGISTRY_PATH = os.path.expanduser("~/.m365-connections.json")
+
+
+def load_registry():
+    with open(REGISTRY_PATH) as f:
+        return json.load(f)
+
+
+def save_registry(registry):
+    with open(REGISTRY_PATH, "w") as f:
+        json.dump(registry, f, indent=2)
+        f.write("\n")
+
+
+def cmd_list(registry):
+    connections = registry.get("connections", {})
+    if not connections:
+        print("No connections configured.")
+        return
+    for name, cfg in connections.items():
+        email = cfg.get("expectedEmail", "(no email set)")
+        desc = cfg.get("description", "")
+        print(f"  {name:<25} {email:<45} {desc}")
+
+
+def cmd_show(registry, name):
+    conn = registry.get("connections", {}).get(name)
+    if not conn:
+        print(f"Connection '{name}' not found.")
+        sys.exit(1)
+    print(json.dumps({name: conn}, indent=2))
+
+
+def cmd_add(registry, name):
+    connections = registry.get("connections", {})
+    if name in connections:
+        print(f"Connection '{name}' already exists. Use 'edit' to modify it.")
+        sys.exit(1)
+
+    print(f"Adding connection: {name}")
+    tenant = input("  Tenant (e.g., contoso.com): ").strip()
+    app_id = input("  App ID (Azure AD app registration, or blank to skip): ").strip()
+    description = input("  Description: ").strip()
+    expected_email = input("  Expected email (for Azure context isolation, or blank): ").strip()
+
+    conn = {
+        "tenant": tenant,
+        "description": description,
+        "mcps": ["mm"],
+    }
+    if app_id:
+        conn["appId"] = app_id
+    if expected_email:
+        conn["expectedEmail"] = expected_email
+
+    connections[name] = conn
+    save_registry(registry)
+    print(f"Added '{name}'.")
+
+
+def cmd_edit(registry, name, key, value):
+    conn = registry.get("connections", {}).get(name)
+    if not conn:
+        print(f"Connection '{name}' not found.")
+        sys.exit(1)
+
+    # Handle booleans
+    if value.lower() == "true":
+        value = True
+    elif value.lower() == "false":
+        value = False
+
+    # Handle deletion
+    if value == "null" or value == "":
+        if key in conn:
+            del conn[key]
+            save_registry(registry)
+            print(f"Removed '{key}' from '{name}'.")
+        else:
+            print(f"Key '{key}' not found on '{name}'.")
+        return
+
+    conn[key] = value
+    save_registry(registry)
+    print(f"Set {name}.{key} = {value}")
+
+
+def cmd_rename(registry, old_name, new_name):
+    connections = registry.get("connections", {})
+    if old_name not in connections:
+        print(f"Connection '{old_name}' not found.")
+        sys.exit(1)
+    if new_name in connections:
+        print(f"Connection '{new_name}' already exists.")
+        sys.exit(1)
+
+    connections[new_name] = connections.pop(old_name)
+    save_registry(registry)
+    print(f"Renamed '{old_name}' -> '{new_name}'.")
+
+
+def cmd_remove(registry, name):
+    connections = registry.get("connections", {})
+    if name not in connections:
+        print(f"Connection '{name}' not found.")
+        sys.exit(1)
+
+    confirm = input(f"Remove '{name}'? (y/N): ").strip().lower()
+    if confirm != "y":
+        print("Cancelled.")
+        return
+
+    del connections[name]
+    save_registry(registry)
+    print(f"Removed '{name}'.")
+
+
+def cmd_duplicate(registry, source, new_name):
+    connections = registry.get("connections", {})
+    if source not in connections:
+        print(f"Connection '{source}' not found.")
+        sys.exit(1)
+    if new_name in connections:
+        print(f"Connection '{new_name}' already exists.")
+        sys.exit(1)
+
+    import copy
+    connections[new_name] = copy.deepcopy(connections[source])
+    # Clear expectedEmail since the new connection is a different account
+    connections[new_name].pop("expectedEmail", None)
+    connections[new_name]["description"] = f"(copy of {source})"
+    save_registry(registry)
+    print(f"Duplicated '{source}' -> '{new_name}'. Update description and expectedEmail.")
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__)
+        sys.exit(1)
+
+    registry = load_registry()
+    cmd = sys.argv[1]
+
+    if cmd == "list":
+        cmd_list(registry)
+    elif cmd == "show" and len(sys.argv) >= 3:
+        cmd_show(registry, sys.argv[2])
+    elif cmd == "add" and len(sys.argv) >= 3:
+        cmd_add(registry, sys.argv[2])
+    elif cmd == "edit" and len(sys.argv) >= 5:
+        cmd_edit(registry, sys.argv[2], sys.argv[3], sys.argv[4])
+    elif cmd == "rename" and len(sys.argv) >= 4:
+        cmd_rename(registry, sys.argv[2], sys.argv[3])
+    elif cmd == "remove" and len(sys.argv) >= 3:
+        cmd_remove(registry, sys.argv[2])
+    elif cmd == "duplicate" and len(sys.argv) >= 4:
+        cmd_duplicate(registry, sys.argv[2], sys.argv[3])
+    else:
+        print(__doc__)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

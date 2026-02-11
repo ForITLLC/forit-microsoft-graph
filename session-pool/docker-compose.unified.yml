@@ -10,7 +10,7 @@
 #
 # Reset a connection without restarting:
 #   curl -X POST http://localhost:5200/reset -H 'Content-Type: application/json' \
-#     -d '{"connection": "ForIT-GA"}'
+#     -d '{"connection": "<YOUR_CONNECTION>"}'
 
 services:
   pool:
@@ -32,7 +32,7 @@ services:
       resources:
         limits:
           cpus: "2.0"
-          memory: 2G
+          memory: 4G
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5200/health"]
       interval: 60s

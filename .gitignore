@@ -27,3 +27,9 @@ Thumbs.db
 # Logs
 logs/
 *.db
+
+# Local MCP registration (contains absolute paths)
+mm/mcpjungle-config.json
+
+# Internal planning docs (contain deployment-specific details)
+docs/plans/

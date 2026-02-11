@@ -55,6 +55,22 @@ GRAPH_SCOPES = [
     "ChannelMessage.Send",
 ]
 
+# Email signature patterns — CodeTwo adds signatures on most accounts.
+# Connections with "skipSignatureStrip": true in the registry are excluded.
+# Strip these before sending so CodeTwo doesn't double-sign.
+EMAIL_SIG_PATTERNS = [
+    r'(?i)best regards',
+    r'(?i)kind regards',
+    r'(?i)sincerely',
+    r'(?i)thanks,?\s*\n',
+    r'(?i)thank you,?\s*\n',
+    r'(?i)cheers,?\s*\n',
+    r'(?i)warm regards',
+    r'(?i)respectfully',
+    r'(?i)sent from my',
+    r'\n--\s*\n',  # standard sig separator
+]
+
 # Resource configurations for different Microsoft APIs
 RESOURCE_CONFIGS = {
     "graph": {
@@ -100,7 +116,7 @@ def _get_msal_app(connection: str, conn_config: dict) -> msal.PublicClientApplic
     app_id = conn_config.get("appId")
     tenant = conn_config.get("tenantId") or conn_config.get("tenant", "common")
 
-    # If tenant is a domain (e.g. forit.io), use it as-is - MSAL handles it
+    # If tenant is a domain (e.g. contoso.com), use it as-is - MSAL handles it
     authority = f"https://login.microsoftonline.com/{tenant}"
 
     cache = msal.SerializableTokenCache()
@@ -388,6 +404,100 @@ def _make_graph_request(access_token: str, endpoint: str, method: str = "GET",
         return {"status": "error", "error": str(e)}
 
 
+# === Email Interceptors ===
+
+def _strip_email_signature(body, endpoint, conn_config=None):
+    """Strip auto-added signature patterns from email content.
+
+    CodeTwo adds signatures on most accounts. Connections with
+    "skipSignatureStrip": true in the registry are excluded.
+    """
+    if not body or not isinstance(body, dict):
+        return body
+    if not any(k in endpoint for k in ("sendMail", "messages", "reply")):
+        return body
+
+    # Skip stripping if connection opts out
+    if conn_config and conn_config.get("skipSignatureStrip"):
+        return body
+
+    # Reply format — comment is the content
+    if "comment" in body:
+        content = body["comment"]
+        for pattern in EMAIL_SIG_PATTERNS:
+            content = re.split(pattern, content)[0]
+        body["comment"] = content.rstrip()
+        return body
+
+    # sendMail / create message format
+    if "message" in body:
+        content_obj = body["message"].get("body", {})
+    elif "body" in body:
+        content_obj = body["body"]
+    else:
+        return body
+
+    content = content_obj.get("content", "")
+    if not content:
+        return body
+
+    for pattern in EMAIL_SIG_PATTERNS:
+        content = re.split(pattern, content)[0]
+    content_obj["content"] = content.rstrip()
+    return body
+
+
+def _intercept_sendmail(access_token, endpoint, method, body, base_url):
+    """Auto-detect threads for sendMail. Returns (endpoint, method, body, note).
+
+    When POST /me/sendMail is detected:
+    1. Extract primary recipient email
+    2. Search for existing threads with that recipient
+    3. If found → convert to POST /me/messages/{id}/reply
+    4. If not found → proceed with original sendMail
+    """
+    if method.upper() != "POST" or "sendMail" not in endpoint:
+        return endpoint, method, body, None
+
+    if not body or not isinstance(body, dict):
+        return endpoint, method, body, None
+
+    msg = body.get("message", {})
+    recipients = msg.get("toRecipients", [])
+    if not recipients:
+        return endpoint, method, body, None
+    email = recipients[0].get("emailAddress", {}).get("address", "")
+    if not email:
+        return endpoint, method, body, None
+
+    # Search for existing thread with this recipient
+    search_endpoint = (
+        f'/me/messages?$search="to:{email} OR from:{email}"'
+        f'&$top=5&$orderby=receivedDateTime desc'
+        f'&$select=id,subject,conversationId,receivedDateTime,from'
+    )
+    search = _make_graph_request(access_token, search_endpoint, base_url=base_url)
+
+    if search["status"] != "success":
+        return endpoint, method, body, None  # search failed, proceed with sendMail
+
+    messages = search["data"].get("value", [])
+    if not messages:
+        return endpoint, method, body, "No existing thread found — sending as new email."
+
+    # Found a thread — convert to reply
+    latest = messages[0]
+    reply_id = latest["id"]
+    subject = latest.get("subject", "(unknown)")
+
+    content = msg.get("body", {}).get("content", "")
+    new_endpoint = f"/me/messages/{reply_id}/reply"
+    new_body = {"comment": content}
+    note = f'Found existing thread: "{subject}" — replying instead of new email.'
+
+    return new_endpoint, "POST", new_body, note
+
+
 # === Session Pool (PowerShell) ===
 
 def call_pool(endpoint: str, method: str = "GET", data: dict = None) -> dict:
@@ -421,7 +531,7 @@ async def list_tools():
                 "properties": {
                     "connection": {
                         "type": "string",
-                        "description": "Connection name (e.g., 'ForIT-GA')",
+                        "description": "Connection name from ~/.m365-connections.json",
                     },
                     "module": {
                         "type": "string",
@@ -437,13 +547,13 @@ async def list_tools():
         ),
         Tool(
             name="graph_request",
-            description="Microsoft REST API. Omit all params to list connections. Provide connection+endpoint to call Graph. Use resource='flow' for Power Automate API.",
+            description="Microsoft REST API. Omit all params to list connections. Provide connection+endpoint to call Graph.\n\nFor Power Automate: use resource='flow' — this handles auth to https://service.flow.microsoft.com automatically. Do NOT use Get-AzAccessToken or m365 util accesstoken for Flow API tokens.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "connection": {
                         "type": "string",
-                        "description": "Connection name (e.g., 'ForIT-GA')",
+                        "description": "Connection name from ~/.m365-connections.json",
                     },
                     "endpoint": {
                         "type": "string",
@@ -666,17 +776,29 @@ def _handle_graph_request(arguments: dict) -> list:
     # Make the API request
     method = arguments.get("method", "GET")
     body = arguments.get("body")
+    base_url = res_config["base_url"]
+
+    # Email interceptors: auto-thread detection + signature stripping
+    note = None
+    endpoint, method, body, note = _intercept_sendmail(
+        access_token, endpoint, method, body, base_url,
+    )
+    if body:
+        body = _strip_email_signature(body, endpoint, conn_config)
 
     result = _make_graph_request(
         access_token, endpoint, method, body,
-        base_url=res_config["base_url"],
+        base_url=base_url,
     )
 
     if result["status"] == "error":
         return [TextContent(type="text", text=f"Error: {result['error']}")]
 
     data = result["data"]
-    return [TextContent(type="text", text=json.dumps(data, indent=2))]
+    output = json.dumps(data, indent=2)
+    if note:
+        output = f"**Note:** {note}\n\n{output}"
+    return [TextContent(type="text", text=output)]
 
 
 # === Main ===

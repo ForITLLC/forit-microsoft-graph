@@ -24,4 +24,4 @@ curl -s http://localhost:5200/health | jq .
 echo ""
 echo "To view status: curl http://localhost:5200/status"
 echo "To view metrics: curl http://localhost:5200/metrics"
-echo "To restart a connection: curl -X POST http://localhost:5200/container/ForIT-GA/restart"
+echo "To restart a connection: curl -X POST http://localhost:5200/container/<CONNECTION>/restart"

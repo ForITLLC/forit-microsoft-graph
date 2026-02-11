@@ -15,7 +15,8 @@ Old servers (pnp, graph, pwsh-manager, registry) are archived in `_archived/`.
 - Every command REQUIRES `connection` parameter
 - NEVER use the word "default" in any MM code
 - Connection = Account + AppId + Tenant + Description
-- Connections: ForIT-GA, ForIT-Personal, Pivot, GreatNorth-GA, GreatNorth-Personal, WMA
+- Naming convention: GA (admin), Individual (your user on work tenant), Personal (your own tenant)
+- Manage with `./mm-connections` CLI (list, add, edit, rename, remove, duplicate)
 
 ## Authentication
 - ALWAYS use MM MCP tools, NEVER Bash for M365 auth
@@ -100,10 +101,10 @@ Dual output: stdout (`docker logs`) + persistent files (`~/.m365-logs/`).
 docker ps --format "{{.Names}}\t{{.Status}}" | grep m365
 
 # Test PowerShell
-mcpjungle invoke mm run '{"connection":"ForIT-GA","module":"exo","command":"Get-Mailbox -ResultSize 1"}'
+mcpjungle invoke mm run '{"connection":"<YOUR_CONNECTION>","module":"exo","command":"Get-Mailbox -ResultSize 1"}'
 
 # Test Graph API
-mcpjungle invoke mm graph_request '{"connection":"ForIT-GA","endpoint":"/me"}'
+mcpjungle invoke mm graph_request '{"connection":"<YOUR_CONNECTION>","endpoint":"/me"}'
 
 # Session status
 curl http://localhost:5200/status | jq
@@ -117,5 +118,8 @@ tail -f ~/.m365-logs/session-pool-unified.log
 
 ## MCPJungle Registration
 ```bash
+# Copy and edit the example config with your local paths
+cp mm/mcpjungle-config.example.json mm/mcpjungle-config.json
+# Then register
 mcpjungle register --conf mm/mcpjungle-config.json
 ```

@@ -1,9 +1,16 @@
 # Isolated containers - one per connection
-# Resource-tuned for Mac mini server (10-core, 32GB)
+# Better resource isolation, recommended for production or multi-user servers
 # Router on 5200, connections on 5210+
 #
 # Shared config defined once via x-connection-defaults anchor.
 # Each connection service merges it with <<: *connection-defaults.
+#
+# SETUP: Copy this file and replace the example connection names
+# with your actual connection names from ~/.m365-connections.json.
+# Add more services by copying the pattern (increment port numbers).
+#
+# Usage:
+#   docker compose -p m365-session-pool -f docker-compose.isolated.yml up -d
 
 x-connection-defaults: &connection-defaults
   build:
@@ -52,129 +59,54 @@ services:
           cpus: "0.25"
           memory: 128M
     depends_on:
-      - forit-ga
-      - forit-personal
-      - greatnorth-ga
-      - greatnorth-personal
-      - pivot
-      - wma
+      - contoso-ga
+      - contoso-individual
 
-  forit-ga:
+  # --- Example connection: Contoso Global Admin ---
+  contoso-ga:
     <<: *connection-defaults
-    container_name: m365-forit-ga
+    container_name: m365-contoso-ga
     ports:
       - "5210:5200"
     environment:
-      - M365_CONNECTION=ForIT-GA
+      - M365_CONNECTION=Contoso-GA        # Must match name in ~/.m365-connections.json
       - M365_POOL_PORT=5200
     volumes:
       - ~/.m365-connections.json:/root/.m365-connections.json:ro
       - ~/.m365-logs:/app/logs
       - ~/.m365-state:/app/state
-      - m365-forit-ga-azure:/root/.Azure
-      - m365-forit-ga-config:/root/.config
-      - m365-forit-ga-local:/root/.local
+      - m365-contoso-ga-azure:/root/.Azure
+      - m365-contoso-ga-config:/root/.config
+      - m365-contoso-ga-local:/root/.local
 
-  forit-personal:
+  # --- Example connection: Contoso Individual ---
+  contoso-individual:
     <<: *connection-defaults
-    container_name: m365-forit-personal
+    container_name: m365-contoso-individual
     ports:
       - "5211:5200"
     environment:
-      - M365_CONNECTION=ForIT-Personal
+      - M365_CONNECTION=Contoso-Individual  # Must match name in ~/.m365-connections.json
       - M365_POOL_PORT=5200
     volumes:
       - ~/.m365-connections.json:/root/.m365-connections.json:ro
       - ~/.m365-logs:/app/logs
       - ~/.m365-state:/app/state
-      - m365-forit-personal-azure:/root/.Azure
-      - m365-forit-personal-config:/root/.config
-      - m365-forit-personal-local:/root/.local
+      - m365-contoso-individual-azure:/root/.Azure
+      - m365-contoso-individual-config:/root/.config
+      - m365-contoso-individual-local:/root/.local
 
-  greatnorth-ga:
-    <<: *connection-defaults
-    container_name: m365-greatnorth-ga
-    ports:
-      - "5212:5200"
-    environment:
-      - M365_CONNECTION=GreatNorth-GA
-      - M365_POOL_PORT=5200
-    volumes:
-      - ~/.m365-connections.json:/root/.m365-connections.json:ro
-      - ~/.m365-logs:/app/logs
-      - ~/.m365-state:/app/state
-      - m365-greatnorth-ga-azure:/root/.Azure
-      - m365-greatnorth-ga-config:/root/.config
-      - m365-greatnorth-ga-local:/root/.local
-
-  greatnorth-personal:
-    <<: *connection-defaults
-    container_name: m365-greatnorth-personal
-    ports:
-      - "5213:5200"
-    environment:
-      - M365_CONNECTION=GreatNorth-Personal
-      - M365_POOL_PORT=5200
-    volumes:
-      - ~/.m365-connections.json:/root/.m365-connections.json:ro
-      - ~/.m365-logs:/app/logs
-      - ~/.m365-state:/app/state
-      - m365-greatnorth-personal-azure:/root/.Azure
-      - m365-greatnorth-personal-config:/root/.config
-      - m365-greatnorth-personal-local:/root/.local
-
-  pivot:
-    <<: *connection-defaults
-    container_name: m365-pivot
-    ports:
-      - "5214:5200"
-    environment:
-      - M365_CONNECTION=Pivot
-      - M365_POOL_PORT=5200
-    volumes:
-      - ~/.m365-connections.json:/root/.m365-connections.json:ro
-      - ~/.m365-logs:/app/logs
-      - ~/.m365-state:/app/state
-      - m365-pivot-azure:/root/.Azure
-      - m365-pivot-config:/root/.config
-      - m365-pivot-local:/root/.local
-
-  wma:
-    <<: *connection-defaults
-    container_name: m365-wma
-    ports:
-      - "5215:5200"
-    environment:
-      - M365_CONNECTION=WMA
-      - M365_POOL_PORT=5200
-    volumes:
-      - ~/.m365-connections.json:/root/.m365-connections.json:ro
-      - ~/.m365-logs:/app/logs
-      - ~/.m365-state:/app/state
-      - m365-wma-azure:/root/.Azure
-      - m365-wma-config:/root/.config
-      - m365-wma-local:/root/.local
+  # Add more connections by copying the pattern above.
+  # Increment the port number (5212, 5213, ...) for each.
 
 networks:
   m365-network:
     driver: bridge
 
 volumes:
-  m365-forit-ga-azure:
-  m365-forit-ga-config:
-  m365-forit-ga-local:
-  m365-forit-personal-azure:
-  m365-forit-personal-config:
-  m365-forit-personal-local:
-  m365-greatnorth-ga-azure:
-  m365-greatnorth-ga-config:
-  m365-greatnorth-ga-local:
-  m365-greatnorth-personal-azure:
-  m365-greatnorth-personal-config:
-  m365-greatnorth-personal-local:
-  m365-pivot-azure:
-  m365-pivot-config:
-  m365-pivot-local:
-  m365-wma-azure:
-  m365-wma-config:
-  m365-wma-local:
+  m365-contoso-ga-azure:
+  m365-contoso-ga-config:
+  m365-contoso-ga-local:
+  m365-contoso-individual-azure:
+  m365-contoso-individual-config:
+  m365-contoso-individual-local:

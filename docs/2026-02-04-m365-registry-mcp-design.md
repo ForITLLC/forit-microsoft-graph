@@ -24,8 +24,8 @@ A `m365-registry` MCP with tools to manage connections.
 Add a new connection to the registry.
 
 **Required parameters:**
-- `name` (string) - Connection identifier (e.g., "ForIT", "ClientX")
-- `tenant` (string) - Tenant domain (e.g., "forit.io", "clientx.onmicrosoft.com")
+- `name` (string) - Connection identifier (e.g., "Contoso-GA", "ClientX")
+- `tenant` (string) - Tenant domain (e.g., "contoso.com", "clientx.onmicrosoft.com")
 - `appId` (string) - Azure AD app registration ID (REQUIRED - no default)
 - `description` (string) - REQUIRED explanation of what this app/account is for
 - `mcps` (array) - Which MCP servers can use this connection
@@ -103,7 +103,7 @@ Show instructions for creating a new Azure AD app registration.
 
 ### Location
 
-`/Users/benjaminwesleythomas/GitProjects/personal-MacMini/mcp-servers/m365-registry/`
+`mm/` (within this repository)
 
 ### Stack
 
