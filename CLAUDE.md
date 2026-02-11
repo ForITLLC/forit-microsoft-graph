@@ -44,6 +44,25 @@ Old servers (pnp, graph, pwsh-manager, registry) are archived in `_archived/`.
 - OData noise stripped automatically
 - Token cache: `~/.mm-graph-tokens/` (per connection, MSAL)
 
+## Request Hooks (mm/server.py)
+Both tools have internal hook systems that fire before/after requests:
+
+### `GRAPH_HOOKS` — Graph API request hooks
+- `(match_fn, handler_fn)` pairs, all matching hooks fire in order
+- Handler: `(endpoint, method, body, conn_config) -> (body, note)`
+- Can modify body (e.g. strip email signatures) and/or return notes (e.g. sendMail reminder)
+- Notes get prepended to the response as `**Note:** ...`
+
+### `RUN_HOOKS` — PowerShell command hooks
+- `(match_fn, handler_fn)` pairs, all matching hooks fire in order
+- Handler: `(command, module, conn_config) -> (command, note)`
+- Can modify commands, return notes, or block execution (return `None` as command)
+- Example: catches cmdlets from uninstalled Az modules and redirects to `Invoke-AzRestMethod`
+
+### Installed Az Modules
+Only `Az.Accounts` is installed in the container. All other Az cmdlets should use
+`Invoke-AzRestMethod` to call the Azure REST API directly.
+
 ## Session Pool
 
 ### Deployment Modes
