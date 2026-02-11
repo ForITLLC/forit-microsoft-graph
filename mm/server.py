@@ -447,18 +447,49 @@ def _strip_email_signature(body, endpoint, conn_config=None):
     return body
 
 
-def _intercept_sendmail(endpoint, method):
-    """Return a reminder note for sendMail requests.
+# === Graph Request Hooks ===
+# Each hook: (match_fn, handler_fn)
+#   match_fn(endpoint, method) -> bool
+#   handler_fn(endpoint, method, body, conn_config) -> (body, note)
+#     - body: modified body (or original if unchanged)
+#     - note: string to prepend to response, or None
+# Hooks run in order. All matching hooks fire (notes accumulate, body chains).
 
-    Doesn't modify the request — just appends a note so the AI confirms
-    with the user before sending, and considers whether this should be a reply.
-    """
-    if method.upper() != "POST" or "sendMail" not in endpoint:
-        return None
-    return (
+def _hook_sendmail_reminder(endpoint, method, body, conn_config):
+    """Remind the AI to confirm email sends with the user."""
+    note = (
         "Have you confirmed this email with the user? "
         "Are you sure this is not meant to be a reply to an existing thread?"
     )
+    return body, note
+
+
+def _hook_strip_signature(endpoint, method, body, conn_config):
+    """Strip CodeTwo email signatures from outbound messages."""
+    return _strip_email_signature(body, endpoint, conn_config), None
+
+
+GRAPH_HOOKS = [
+    (
+        lambda ep, m: m.upper() == "POST" and "sendMail" in ep,
+        _hook_sendmail_reminder,
+    ),
+    (
+        lambda ep, m: m.upper() == "POST" and any(k in ep for k in ("sendMail", "reply", "forward", "/messages")),
+        _hook_strip_signature,
+    ),
+]
+
+
+def _run_graph_hooks(endpoint, method, body, conn_config):
+    """Run all matching Graph hooks. Returns (body, [notes])."""
+    notes = []
+    for match_fn, handler_fn in GRAPH_HOOKS:
+        if match_fn(endpoint, method):
+            body, note = handler_fn(endpoint, method, body, conn_config)
+            if note:
+                notes.append(note)
+    return body, notes
 
 
 # === Session Pool (PowerShell) ===
@@ -741,11 +772,11 @@ def _handle_graph_request(arguments: dict) -> list:
     body = arguments.get("body")
     base_url = res_config["base_url"]
 
-    # Email interceptors: reminder note + signature stripping
-    note = _intercept_sendmail(endpoint, method)
-
+    # Run Graph hooks (signature stripping, send reminders, etc.)
     if body:
-        body = _strip_email_signature(body, endpoint, conn_config)
+        body, notes = _run_graph_hooks(endpoint, method, body, conn_config)
+    else:
+        notes = []
 
     result = _make_graph_request(
         access_token, endpoint, method, body,
@@ -757,8 +788,9 @@ def _handle_graph_request(arguments: dict) -> list:
 
     data = result["data"]
     output = json.dumps(data, indent=2)
-    if note:
-        output = f"**Note:** {note}\n\n{output}"
+    if notes:
+        prefix = "\n".join(f"**Note:** {n}" for n in notes)
+        output = f"{prefix}\n\n{output}"
     return [TextContent(type="text", text=output)]
 
 
