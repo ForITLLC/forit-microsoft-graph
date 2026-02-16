@@ -33,6 +33,7 @@ Old servers (pnp, graph, pwsh-manager, registry) are archived in `_archived/`.
 - No params → list connections
 - `connection` + `module` + `command` → execute PowerShell
 - Modules: `exo` (Exchange), `pnp` (SharePoint), `azure`, `teams`
+- `confirmed: true` — bypass send guards after reviewing draft preview
 - Command guardrails block dangerous operations (see below)
 
 ### `mm__graph_request` — Microsoft Graph REST API
@@ -40,6 +41,7 @@ Old servers (pnp, graph, pwsh-manager, registry) are archived in `_archived/`.
 - `connection` + `endpoint` → GET request to Graph
 - `connection` + `endpoint` + `method` + `body` → any Graph operation
 - Optional `resource`: `graph` (default) or `flow` (Power Automate)
+- `confirmed: true` — bypass send guards after reviewing draft preview
 - Supports `/v1.0/` and `/beta/` endpoints
 - OData noise stripped automatically
 - Token cache: `~/.mm-graph-tokens/` (per connection, MSAL)
@@ -47,16 +49,30 @@ Old servers (pnp, graph, pwsh-manager, registry) are archived in `_archived/`.
 ## Request Hooks (mm/server.py)
 Both tools have internal hook systems that fire before/after requests:
 
+### Send Guards (two-phase confirmation)
+Email and Teams sends are **blocked by default**. The first call returns a formatted
+draft preview. To actually send, re-call with `confirmed: true`.
+
+**Guarded Graph endpoints:**
+- `POST .../sendMail`, `.../reply`, `.../replyAll`, `.../forward`, `.../send`
+- `POST /teams/{id}/channels/{id}/messages`, `/chats/{id}/messages`
+
+**Guarded PowerShell commands:**
+- `Send-MailMessage`, `Send-MgUserMail`
+- `New-MgChatMessage`, `New-MgTeamChannelMessage`, `Submit-PnPTeamsChannelMessage`
+
 ### `GRAPH_HOOKS` — Graph API request hooks
 - `(match_fn, handler_fn)` pairs, all matching hooks fire in order
-- Handler: `(endpoint, method, body, conn_config) -> (body, note)`
-- Can modify body (e.g. strip email signatures) and/or return notes (e.g. sendMail reminder)
+- Handler: `(endpoint, method, body, conn_config, confirmed) -> (body, note)`
+- Guard hooks return `_GRAPH_BLOCKED` sentinel to block execution until confirmed
+- Can modify body (e.g. strip email signatures) and/or return notes
 - Notes get prepended to the response as `**Note:** ...`
 
 ### `RUN_HOOKS` — PowerShell command hooks
 - `(match_fn, handler_fn)` pairs, all matching hooks fire in order
-- Handler: `(command, module, conn_config) -> (command, note)`
-- Can modify commands, return notes, or block execution (return `None` as command)
+- Handler: `(command, module, conn_config, confirmed) -> (command, note)`
+- Guard hooks return `None` command to block execution until confirmed
+- Can modify commands, return notes, or block execution
 - Example: catches cmdlets from uninstalled Az modules and redirects to `Invoke-AzRestMethod`
 
 ### Installed Az Modules

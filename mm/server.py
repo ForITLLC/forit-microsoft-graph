@@ -55,6 +55,9 @@ GRAPH_SCOPES = [
     "ChannelMessage.Send",
 ]
 
+# Sentinel: guard hook blocked execution (body can legitimately be None on some endpoints)
+_GRAPH_BLOCKED = object()
+
 # Email signature patterns — CodeTwo adds signatures on most accounts.
 # Connections with "skipSignatureStrip": true in the registry are excluded.
 # Strip these before sending so CodeTwo doesn't double-sign.
@@ -455,40 +458,168 @@ def _strip_email_signature(body, endpoint, conn_config=None):
 #     - note: string to prepend to response, or None
 # Hooks run in order. All matching hooks fire (notes accumulate, body chains).
 
-def _hook_sendmail_reminder(endpoint, method, body, conn_config):
-    """Remind the AI to confirm email sends with the user."""
-    note = (
-        "Have you confirmed this email with the user? "
-        "Are you sure this is not meant to be a reply to an existing thread?"
-    )
-    return body, note
+# === Preview Extractors ===
+
+def _extract_email_preview(body, endpoint):
+    """Format a human-readable draft preview from a Graph email payload."""
+    lines = ["**Draft Email Preview:**\n"]
+
+    if not body or not isinstance(body, dict):
+        lines.append(f"_(empty body — endpoint: `{endpoint}`)_")
+        return "\n".join(lines)
+
+    # sendMail wraps in "message", reply/forward use flat body
+    msg = body.get("message", body)
+
+    # Recipients
+    for field in ("toRecipients", "ccRecipients", "bccRecipients"):
+        recipients = msg.get(field, [])
+        if recipients:
+            label = field.replace("Recipients", "").upper()
+            addrs = ", ".join(
+                r.get("emailAddress", {}).get("address", "?") for r in recipients
+            )
+            lines.append(f"**{label}:** {addrs}")
+
+    # Subject
+    subject = msg.get("subject")
+    if subject:
+        lines.append(f"**Subject:** {subject}")
+
+    # Body content
+    body_obj = msg.get("body", {})
+    content = body_obj.get("content", "")
+    if content:
+        # Truncate for preview
+        preview = content[:500]
+        if len(content) > 500:
+            preview += "…"
+        lines.append(f"\n**Body:**\n{preview}")
+
+    # Comment (reply/forward)
+    comment = body.get("comment")
+    if comment:
+        preview = comment[:500]
+        if len(comment) > 500:
+            preview += "…"
+        lines.append(f"\n**Comment:**\n{preview}")
+
+    # Attachments
+    attachments = msg.get("attachments", [])
+    if attachments:
+        names = [a.get("name", "unnamed") for a in attachments]
+        lines.append(f"\n**Attachments:** {', '.join(names)}")
+
+    lines.append("\n---\nTo send, re-call with `confirmed: true`.")
+    return "\n".join(lines)
 
 
-def _hook_strip_signature(endpoint, method, body, conn_config):
+def _extract_teams_preview(body, endpoint):
+    """Format a human-readable draft preview from a Teams message payload."""
+    lines = ["**Draft Teams Message Preview:**\n"]
+
+    lines.append(f"**Endpoint:** `{endpoint}`")
+
+    if not body or not isinstance(body, dict):
+        lines.append("_(empty body)_")
+        return "\n".join(lines)
+
+    # Message body
+    body_obj = body.get("body", {})
+    content = body_obj.get("content", "")
+    if content:
+        preview = content[:500]
+        if len(content) > 500:
+            preview += "…"
+        lines.append(f"\n**Message:**\n{preview}")
+
+    # Mentions
+    mentions = body.get("mentions", [])
+    if mentions:
+        names = [m.get("mentioned", {}).get("user", {}).get("displayName", "?") for m in mentions]
+        lines.append(f"\n**Mentions:** {', '.join(names)}")
+
+    lines.append("\n---\nTo send, re-call with `confirmed: true`.")
+    return "\n".join(lines)
+
+
+def _extract_ps_send_preview(command):
+    """Format a human-readable preview of a PowerShell send command."""
+    lines = ["**Draft PowerShell Send Preview:**\n"]
+    lines.append(f"```powershell\n{command}\n```")
+    lines.append("\n---\nTo execute, re-call with `confirmed: true`.")
+    return "\n".join(lines)
+
+
+# === Guard Hooks ===
+
+def _hook_guard_email_send(endpoint, method, body, conn_config, confirmed=False):
+    """Block email sends until confirmed. Returns draft preview on first call."""
+    if confirmed:
+        return body, None
+    preview = _extract_email_preview(body, endpoint)
+    return _GRAPH_BLOCKED, preview
+
+
+def _hook_guard_teams_message(endpoint, method, body, conn_config, confirmed=False):
+    """Block Teams message sends until confirmed. Returns draft preview on first call."""
+    if confirmed:
+        return body, None
+    preview = _extract_teams_preview(body, endpoint)
+    return _GRAPH_BLOCKED, preview
+
+
+def _hook_guard_ps_send(command, module, conn_config, confirmed=False):
+    """Block PowerShell send commands until confirmed. Returns command preview on first call."""
+    if confirmed:
+        return command, None
+    preview = _extract_ps_send_preview(command)
+    return None, preview
+
+
+def _hook_strip_signature(endpoint, method, body, conn_config, confirmed=False):
     """Strip CodeTwo email signatures from outbound messages."""
     return _strip_email_signature(body, endpoint, conn_config), None
 
 
 GRAPH_HOOKS = [
+    # Guard hooks — block until confirmed
     (
-        lambda ep, m: m.upper() == "POST" and "sendMail" in ep,
-        _hook_sendmail_reminder,
+        lambda ep, m: m.upper() == "POST" and any(
+            k in ep for k in ("sendMail", "/reply", "/replyAll", "/forward", "/send")
+        ),
+        _hook_guard_email_send,
     ),
     (
-        lambda ep, m: m.upper() == "POST" and any(k in ep for k in ("sendMail", "reply", "forward", "/messages")),
+        lambda ep, m: m.upper() == "POST" and (
+            re.search(r'/teams/[^/]+/channels/[^/]+/messages', ep)
+            or re.search(r'/chats/[^/]+/messages', ep)
+        ),
+        _hook_guard_teams_message,
+    ),
+    # Body modification — only fires after guards pass
+    (
+        lambda ep, m: m.upper() == "POST" and any(
+            k in ep for k in ("sendMail", "reply", "forward", "/messages")
+        ),
         _hook_strip_signature,
     ),
 ]
 
 
-def _run_graph_hooks(endpoint, method, body, conn_config):
-    """Run all matching Graph hooks. Returns (body, [notes])."""
+def _run_graph_hooks(endpoint, method, body, conn_config, confirmed=False):
+    """Run all matching Graph hooks. Returns (body, [notes]).
+
+    If a guard hook returns _GRAPH_BLOCKED, stop processing and return immediately.
+    """
     notes = []
     for match_fn, handler_fn in GRAPH_HOOKS:
         if match_fn(endpoint, method):
-            body, note = handler_fn(endpoint, method, body, conn_config)
+            body, note = handler_fn(endpoint, method, body, conn_config, confirmed=confirmed)
             if note:
                 notes.append(note)
+            if body is _GRAPH_BLOCKED:
+                break
     return body, notes
 
 
@@ -513,7 +644,7 @@ _MISSING_AZ_CMDLETS = re.compile(
 )
 
 
-def _hook_missing_az_module(command, module, conn_config):
+def _hook_missing_az_module(command, module, conn_config, confirmed=False):
     """Block cmdlets from uninstalled Az modules — redirect to Invoke-AzRestMethod."""
     if module != "azure":
         return command, None
@@ -529,7 +660,7 @@ def _hook_missing_az_module(command, module, conn_config):
     )
 
 
-def _hook_teams_error_action_stop(command, module, conn_config):
+def _hook_teams_error_action_stop(command, module, conn_config, confirmed=False):
     """Wrap Teams commands with ErrorAction Stop to prevent hanging on API errors.
 
     MicrosoftTeams 7.6.0 Set-CsCallQueue (and similar) throws non-terminating
@@ -546,7 +677,19 @@ def _hook_teams_error_action_stop(command, module, conn_config):
     )
 
 
+# PowerShell send commands that require confirmation
+_PS_SEND_PATTERN = re.compile(
+    r'\b(Send-MailMessage|Send-MgUserMail|New-MgChatMessage|New-MgTeamChannelMessage|Submit-PnPTeamsChannelMessage)\b',
+    re.IGNORECASE,
+)
+
 RUN_HOOKS = [
+    # Guard hooks — block until confirmed
+    (
+        lambda cmd, mod: bool(_PS_SEND_PATTERN.search(cmd)),
+        _hook_guard_ps_send,
+    ),
+    # Existing hooks
     (
         lambda cmd, mod: mod == "azure" and bool(_MISSING_AZ_CMDLETS.search(cmd)),
         _hook_missing_az_module,
@@ -558,7 +701,7 @@ RUN_HOOKS = [
 ]
 
 
-def _run_run_hooks(command, module, conn_config):
+def _run_run_hooks(command, module, conn_config, confirmed=False):
     """Run all matching PowerShell run hooks. Returns (command, [notes]).
 
     If any hook sets command to None, execution should be skipped —
@@ -567,7 +710,7 @@ def _run_run_hooks(command, module, conn_config):
     notes = []
     for match_fn, handler_fn in RUN_HOOKS:
         if match_fn(command, module):
-            command, note = handler_fn(command, module, conn_config)
+            command, note = handler_fn(command, module, conn_config, confirmed=confirmed)
             if note:
                 notes.append(note)
             if command is None:
@@ -619,6 +762,10 @@ async def list_tools():
                         "type": "string",
                         "description": "PowerShell command",
                     },
+                    "confirmed": {
+                        "type": "boolean",
+                        "description": "Set to true to bypass send guards after reviewing the draft preview.",
+                    },
                 },
             },
         ),
@@ -651,6 +798,10 @@ async def list_tools():
                         "description": "Target API: 'graph' (default) for Microsoft Graph, 'flow' for Power Automate",
                         "enum": ["graph", "flow"],
                         "default": "graph",
+                    },
+                    "confirmed": {
+                        "type": "boolean",
+                        "description": "Set to true to bypass send guards after reviewing the draft preview.",
                     },
                 },
             },
@@ -741,8 +892,9 @@ def _handle_run(arguments: dict) -> list:
     if err:
         return [TextContent(type="text", text=err)]
 
-    # Run hooks (missing module redirects, etc.)
-    command, run_notes = _run_run_hooks(command, module, conn_config)
+    # Run hooks (missing module redirects, send guards, etc.)
+    confirmed = arguments.get("confirmed", False)
+    command, run_notes = _run_run_hooks(command, module, conn_config, confirmed=confirmed)
     if command is None:
         # Hook blocked execution — return the notes as the response
         return [TextContent(type="text", text="\n\n".join(run_notes))]
@@ -863,13 +1015,15 @@ def _handle_graph_request(arguments: dict) -> list:
     # Make the API request
     method = arguments.get("method", "GET")
     body = arguments.get("body")
+    confirmed = arguments.get("confirmed", False)
     base_url = res_config["base_url"]
 
-    # Run Graph hooks (signature stripping, send reminders, etc.)
-    if body:
-        body, notes = _run_graph_hooks(endpoint, method, body, conn_config)
-    else:
-        notes = []
+    # Run Graph hooks (send guards, signature stripping, etc.)
+    body, notes = _run_graph_hooks(endpoint, method, body, conn_config, confirmed=confirmed)
+
+    # Guard hook blocked execution — return the draft preview
+    if body is _GRAPH_BLOCKED:
+        return [TextContent(type="text", text="\n\n".join(notes))]
 
     result = _make_graph_request(
         access_token, endpoint, method, body,
