@@ -673,13 +673,15 @@ class Session:
             else:
                 logger.info(f"[{self.session_id}] Command succeeded ({len(output)} chars): {output_preview}")
 
-            # GC to reduce memory pressure between commands — use _send_raw
-            # so stdout stays in sync (fire-and-forget without marker causes desync).
-            # Timeout must be generous: if GC times out, the MARKER stays in stdout
-            # and the next command reads it as its own output → corrupt results.
+            # GC to reduce memory pressure between commands.
+            # Run as a fire-and-forget background job so it can't capture late-arriving
+            # output from EXO cmdlets (which flush asynchronously after the marker).
+            # Previous approach used _send_raw which waited for a marker — any EXO output
+            # that arrived late got swallowed into the GC read, losing real command output.
             try:
                 if self.process and self.process.poll() is None and not module_config.get("use_pac"):
-                    self._send_raw("[System.GC]::Collect()", timeout=30)
+                    self.process.stdin.write("Start-Job { [System.GC]::Collect() } | Out-Null\n")
+                    self.process.stdin.flush()
             except Exception:
                 pass  # Non-critical — don't fail the response over GC
 
