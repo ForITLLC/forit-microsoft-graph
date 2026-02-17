@@ -521,7 +521,7 @@ def _extract_email_preview(body, endpoint):
         names = [a.get("name", "unnamed") for a in attachments]
         lines.append(f"\n**Attachments:** {', '.join(names)}")
 
-    lines.append("\n---\nTo send, re-call with `confirmed: true`.")
+    lines.append("\n---\n**BLOCKED — human approval required.** Show this preview to the user and ask for confirmation.\nDo NOT retry automatically. To send after approval, re-call this tool with the same parameters plus `\"confirmed\": true` as a **top-level tool parameter** (next to `connection`, `endpoint`, etc. — NOT inside `body`).")
     return "\n".join(lines)
 
 
@@ -550,7 +550,7 @@ def _extract_teams_preview(body, endpoint):
         names = [m.get("mentioned", {}).get("user", {}).get("displayName", "?") for m in mentions]
         lines.append(f"\n**Mentions:** {', '.join(names)}")
 
-    lines.append("\n---\nTo send, re-call with `confirmed: true`.")
+    lines.append("\n---\n**BLOCKED — human approval required.** Show this preview to the user and ask for confirmation.\nDo NOT retry automatically. To send after approval, re-call this tool with the same parameters plus `\"confirmed\": true` as a **top-level tool parameter** (next to `connection`, `endpoint`, etc. — NOT inside `body`).")
     return "\n".join(lines)
 
 
@@ -558,7 +558,7 @@ def _extract_ps_send_preview(command):
     """Format a human-readable preview of a PowerShell send command."""
     lines = ["**Draft PowerShell Send Preview:**\n"]
     lines.append(f"```powershell\n{command}\n```")
-    lines.append("\n---\nTo execute, re-call with `confirmed: true`.")
+    lines.append("\n---\n**BLOCKED — human approval required.** Show this preview to the user and ask for confirmation.\nDo NOT retry automatically. To execute after approval, re-call this tool with the same parameters plus `\"confirmed\": true` as a **top-level tool parameter** (next to `connection`, `module`, etc.).")
     return "\n".join(lines)
 
 
